@@ -33,6 +33,7 @@ class Eye {
         void lookAt(int, int);
         void lookAtHorizontal(int);
         void lookAtVertical(int);
+        void center();
 };
 
 #endif

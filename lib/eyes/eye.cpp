@@ -60,9 +60,17 @@ void Eye::lookAt (int hpos, int vpos) {
 }
 
 void Eye::lookAtHorizontal (int pos) {
-    horizontal_servo.write(pos);
+    horizontal_servo.write(map(pos, 0, 180, horizontal_min_pos, horizontal_max_pos));
 }
 
 void Eye::lookAtVertical (int pos) {
-    vertical_servo.write(pos);
+    vertical_servo.write(map(pos, 0, 180, vertical_min_pos, vertical_max_pos));
+}
+
+void Eye::center () {
+    lookAt(90, 90);
+}
+
+void Eye::lidAt (int pos) {
+    lid_servo.write(map(pos, 0, 180, lid_min_pos, lid_max_pos));
 }
