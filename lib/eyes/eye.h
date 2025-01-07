@@ -34,6 +34,8 @@ class Eye {
         void lookAtHorizontal(int);
         void lookAtVertical(int);
         void center();
+
+        void lidAt(int);
 };
 
 #endif
