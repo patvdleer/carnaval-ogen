@@ -1,8 +1,9 @@
 #include <Arduino.h>
 #include <Servo.h>
 #include <Wire.h>
-#include <Adafruit_MPU6050.h>
-#include <Adafruit_Sensor.h>
+#include "I2Cdev.h"
+#include "MPU6050_6Axis_MotionApps20.h"
+//#include "MPU6050_6Axis_MotionApps612.h" // Uncomment this library to work with DMP 6.12 and comment on the above library.
 
 #include "eye.h"
 #include "eyes.h"
@@ -33,98 +34,118 @@ unsigned long lastlooktime;    // tijd dat de vorige keer naar een andere positi
 unsigned long currenttime;     // de huidige tijd om de delay te kunnen bepalen
 unsigned long lastknipoogtime; // tijd dat de vorige keer geknipoogd werd
 
-Adafruit_MPU6050 mpu;
+/* MPU6050 default I2C address is 0x68*/
+MPU6050 mpu;
+//MPU6050 mpu(0x69); //Use for AD0 high
+//MPU6050 mpu(0x68, &Wire1); //Use for AD0 low, but 2nd Wire (TWI/I2C) object.
+
 Eye eye_left;
 Eye eye_right;
 Eyes eyes;
 
-void debug_mpu()
-{
-  Serial.print("Accelerometer range set to: ");
-  switch (mpu.getAccelerometerRange()) {
-  case MPU6050_RANGE_2_G:
-    Serial.println("+-2G");
-    break;
-  case MPU6050_RANGE_4_G:
-    Serial.println("+-4G");
-    break;
-  case MPU6050_RANGE_8_G:
-    Serial.println("+-8G");
-    break;
-  case MPU6050_RANGE_16_G:
-    Serial.println("+-16G");
-    break;
-  }
+#define OUTPUT_READABLE_YAWPITCHROLL
 
-  Serial.print("Gyro range set to: ");
-  switch (mpu.getGyroRange()) {
-  case MPU6050_RANGE_250_DEG:
-    Serial.println("+- 250 deg/s");
-    break;
-  case MPU6050_RANGE_500_DEG:
-    Serial.println("+- 500 deg/s");
-    break;
-  case MPU6050_RANGE_1000_DEG:
-    Serial.println("+- 1000 deg/s");
-    break;
-  case MPU6050_RANGE_2000_DEG:
-    Serial.println("+- 2000 deg/s");
-    break;
-  }
+int const INTERRUPT_PIN = 2;  // Define the interruption #0 pin
+bool blinkState;
 
-  Serial.print("Filter bandwidth set to: ");
-  switch (mpu.getFilterBandwidth()) {
-  case MPU6050_BAND_260_HZ:
-    Serial.println("260 Hz");
-    break;
-  case MPU6050_BAND_184_HZ:
-    Serial.println("184 Hz");
-    break;
-  case MPU6050_BAND_94_HZ:
-    Serial.println("94 Hz");
-    break;
-  case MPU6050_BAND_44_HZ:
-    Serial.println("44 Hz");
-    break;
-  case MPU6050_BAND_21_HZ:
-    Serial.println("21 Hz");
-    break;
-  case MPU6050_BAND_10_HZ:
-    Serial.println("10 Hz");
-    break;
-  case MPU6050_BAND_5_HZ:
-    Serial.println("5 Hz");
-    break;
-  }
+/*---MPU6050 Control/Status Variables---*/
+bool DMPReady = false;  // Set true if DMP init was successful
+uint8_t MPUIntStatus;   // Holds actual interrupt status byte from MPU
+uint8_t devStatus;      // Return status after each device operation (0 = success, !0 = error)
+uint16_t packetSize;    // Expected DMP packet size (default is 42 bytes)
+uint8_t FIFOBuffer[64]; // FIFO storage buffer
 
+/*---Orientation/Motion Variables---*/ 
+Quaternion q;           // [w, x, y, z]         Quaternion container
+VectorInt16 aa;         // [x, y, z]            Accel sensor measurements
+VectorInt16 gy;         // [x, y, z]            Gyro sensor measurements
+VectorInt16 aaReal;     // [x, y, z]            Gravity-free accel sensor measurements
+VectorInt16 aaWorld;    // [x, y, z]            World-frame accel sensor measurements
+VectorFloat gravity;    // [x, y, z]            Gravity vector
+float euler[3];         // [psi, theta, phi]    Euler angle container
+float ypr[3];           // [yaw, pitch, roll]   Yaw/Pitch/Roll container and gravity vector
+
+/*-Packet structure for InvenSense teapot demo-*/ 
+uint8_t teapotPacket[14] = { '$', 0x02, 0, 0, 0, 0, 0, 0, 0, 0, 0x00, 0x00, '\r', '\n' };
+
+/*------Interrupt detection routine------*/
+volatile bool MPUInterrupt = false;     // Indicates whether MPU6050 interrupt pin has gone high
+void DMPDataReady() {
+  MPUInterrupt = true;
 }
 
 void setup_mpu()
 {
-  if (!mpu.begin())
-  {
-    Serial.println("Failed to find MPU6050 chip");
-    while (1)
-    {
-      delay(10);
-    }
+  /*Initialize device*/
+  Serial.println(F("Initializing I2C devices..."));
+  mpu.initialize();
+  pinMode(INTERRUPT_PIN, INPUT);
+
+  /*Verify connection*/
+  Serial.println(F("Testing MPU6050 connection..."));
+  if(mpu.testConnection() == false){
+    Serial.println("MPU6050 connection failed");
+    while(true);
   }
-  Serial.println("MPU6050 Found!");
+  else {
+    Serial.println("MPU6050 connection successful");
+  }
 
-  // setup motion detection
-  mpu.setHighPassFilter(MPU6050_HIGHPASS_0_63_HZ);
-  mpu.setMotionDetectionThreshold(1);
-  mpu.setMotionDetectionDuration(20);
-  mpu.setInterruptPinLatch(true); // Keep it latched.  Will turn off when reinitialized.
-  mpu.setInterruptPinPolarity(true);
-  mpu.setMotionInterrupt(true);
+  /* Initializate and configure the DMP*/
+  Serial.println(F("Initializing DMP..."));
+  devStatus = mpu.dmpInitialize();
 
-  // debug_mpu();
+  /* Supply your gyro offsets here, scaled for min sensitivity */
+  mpu.setXGyroOffset(0);
+  mpu.setYGyroOffset(0);
+  mpu.setZGyroOffset(0);
+  mpu.setXAccelOffset(0);
+  mpu.setYAccelOffset(0);
+  mpu.setZAccelOffset(0);
+
+  /* Making sure it worked (returns 0 if so) */ 
+  if (devStatus == 0) {
+    mpu.CalibrateAccel(6);  // Calibration Time: generate offsets and calibrate our MPU6050
+    mpu.CalibrateGyro(6);
+    Serial.println("These are the Active offsets: ");
+    mpu.PrintActiveOffsets();
+    Serial.println(F("Enabling DMP..."));   //Turning ON DMP
+    mpu.setDMPEnabled(true);
+
+    /*Enable Arduino interrupt detection*/
+    Serial.print(F("Enabling interrupt detection (Arduino external interrupt "));
+    Serial.print(digitalPinToInterrupt(INTERRUPT_PIN));
+    Serial.println(F(")..."));
+    attachInterrupt(digitalPinToInterrupt(INTERRUPT_PIN), DMPDataReady, RISING);
+    MPUIntStatus = mpu.getIntStatus();
+
+    /* Set the DMP Ready flag so the main loop() function knows it is okay to use it */
+    Serial.println(F("DMP ready! Waiting for first interrupt..."));
+    DMPReady = true;
+    packetSize = mpu.dmpGetFIFOPacketSize(); //Get expected DMP packet size for later comparison
+  } 
+  else {
+    Serial.print(F("DMP Initialization failed (code ")); //Print the error code
+    Serial.print(devStatus);
+    Serial.println(F(")"));
+    // 1 = initial memory load failed
+    // 2 = DMP configuration updates failed
+  }
+  pinMode(LED_BUILTIN, OUTPUT);
 }
 
 void setup()
 {
+  #if I2CDEV_IMPLEMENTATION == I2CDEV_ARDUINO_WIRE
+    Wire.begin();
+    Wire.setClock(400000); // 400kHz I2C clock. Comment on this line if having compilation difficulties
+  #elif I2CDEV_IMPLEMENTATION == I2CDEV_BUILTIN_FASTWIRE
+    Fastwire::setup(400, true);
+  #endif
+
   Serial.begin(115200);
+  while (!Serial);
+
   setup_mpu();
 
   eye_left.begin(eye_left_hor, eye_left_vert, eye_left_lid);
@@ -142,17 +163,6 @@ void setup()
   lastblinktime = millis();                    // get last binking time
   lastlooktime = millis();                     // get last looking time
   lastknipoogtime = millis();                  // get last knipoog time
-}
-
-bool is_bent_over()
-{
-  if (mpu.getMotionInterruptStatus())
-  {
-    sensors_event_t a, g, temp;
-    mpu.getEvent(&a, &g, &temp);
-    return g.gyro.x > 90;
-  }
-  return false;
 }
 
 void program1()
@@ -224,39 +234,47 @@ void program2()
 {
 }
 
+bool is_bent_over()
+{
+  if (mpu.dmpGetCurrentFIFOPacket(FIFOBuffer)) { // Get the Latest packet 
+      /* Display Euler angles in degrees */
+      mpu.dmpGetQuaternion(&q, FIFOBuffer);
+      mpu.dmpGetGravity(&gravity, &q);
+      mpu.dmpGetYawPitchRoll(ypr, &q, &gravity);
+      float x = ypr[1] * 180/M_PI;
+      float y = ypr[2] * 180/M_PI;
+      bool x_bend = x < -45. || x > 45.;
+      bool y_bend = y < -45. || y > 45.;
+      return x_bend || y_bend;
+   }
+  return false;
+}
 
 void debug_mpu_loop() {
-  if (mpu.getMotionInterruptStatus())
-  {
-    sensors_event_t a, g, temp;
-    mpu.getEvent(&a, &g, &temp);
-
-    /* Print out the values */
-    Serial.print("AX:");
-    Serial.print(a.acceleration.x);
-    Serial.print(",");
-    Serial.print("AY:");
-    Serial.print(a.acceleration.y);
-    Serial.print(",");
-    Serial.print("AZ:");
-    Serial.print(a.acceleration.z);
-    Serial.print("  m/s^2, ");
-    Serial.print("GX:");
-    Serial.print(g.gyro.x);
-    Serial.print(",");
-    Serial.print("GY:");
-    Serial.print(g.gyro.y);
-    Serial.print(",");
-    Serial.print("GZ:");
-    Serial.print(g.gyro.z);
-    Serial.println(" rad/s");
-
-  }
-  // delay(100);
+   if (mpu.dmpGetCurrentFIFOPacket(FIFOBuffer)) { // Get the Latest packet 
+      /* Display Euler angles in degrees */
+      mpu.dmpGetQuaternion(&q, FIFOBuffer);
+      mpu.dmpGetGravity(&gravity, &q);
+      mpu.dmpGetYawPitchRoll(ypr, &q, &gravity);
+      float x = ypr[1] * 180/M_PI;
+      float y = ypr[2] * 180/M_PI;
+      bool x_bend = x < -45. || x > 45.;
+      bool y_bend = y < -45. || y > 45.;
+      Serial.print("ypr\t");
+      Serial.print(ypr[0] * 180/M_PI);
+      Serial.print("\t");
+      Serial.print(ypr[1] * 180/M_PI);
+      Serial.print("\t");
+      Serial.print(ypr[2] * 180/M_PI);
+      Serial.print("\t");
+      Serial.println(x_bend || y_bend);
+   }
 }
 
 void loop()
 {
+  if (!DMPReady) return;
+
   debug_mpu_loop();
 
   //  if(is_bent_over()) {
@@ -264,4 +282,9 @@ void loop()
   //  } else {
   //   program2();
   //  }
+
+  /* Blink LED to indicate activity */
+  //blinkState = !blinkState;
+  blinkState = is_bent_over();
+  digitalWrite(LED_BUILTIN, blinkState);
 }
