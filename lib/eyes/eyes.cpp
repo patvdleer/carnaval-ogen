@@ -55,3 +55,21 @@ void Eyes::lookAtVertical (int pos) {
     eye_left.lookAtVertical(pos);
     eye_right.lookAtVertical(pos);
 }
+
+void Eyes::lidAt (int pos) {
+    eye_left.lidAt(pos);
+    eye_right.lidAt(pos);
+}
+
+int Eyes::getHorizontalPosition () { 
+    // since the positions are relative this should be the same for both eyes
+    return eye_left.getHorizontalPosition();
+}
+
+int Eyes::getVerticalPosition () { 
+    return eye_left.getVerticalPosition();
+}
+
+int Eyes::getEyelidPosition () { 
+    return eye_left.getEyelidPosition();
+}

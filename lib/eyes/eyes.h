@@ -21,6 +21,11 @@ class Eyes {
         void lookAt(int, int);
         void lookAtHorizontal(int);
         void lookAtVertical(int);
+        void lidAt(int);
+
+        int getHorizontalPosition();
+        int getVerticalPosition();
+        int getEyelidPosition();
 };
 
 #endif

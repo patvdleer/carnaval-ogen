@@ -74,3 +74,19 @@ void Eye::center () {
 void Eye::lidAt (int pos) {
     lid_servo.write(map(pos, 0, 180, lid_min_pos, lid_max_pos));
 }
+
+
+int Eye::getHorizontalPosition () { 
+    // while the read function does the convertion it doesn't take our min max into account
+    return map(horizontal_servo.readMicroseconds(), horizontal_min_pos, horizontal_max_pos, 0, 180);
+}
+
+int Eye::getVerticalPosition () { 
+    // while the read function does the convertion it doesn't take our min max into account
+    return map(vertical_servo.readMicroseconds(), vertical_min_pos, vertical_max_pos, 0, 180);
+}
+
+int Eye::getEyelidPosition () { 
+    // while the read function does the convertion it doesn't take our min max into account
+    return map(lid_servo.readMicroseconds(), lid_min_pos, lid_max_pos, 0, 180);
+}

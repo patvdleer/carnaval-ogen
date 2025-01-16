@@ -36,6 +36,10 @@ class Eye {
         void center();
 
         void lidAt(int);
+
+        int getHorizontalPosition();
+        int getVerticalPosition();
+        int getEyelidPosition();
 };
 
 #endif
